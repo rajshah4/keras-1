@@ -7,37 +7,37 @@
 # 
 # Notes
 # - What:
-# + Net2Net is a group of methods to transfer knowledge from a teacher neural
-# net to a student net,so that the student net can be trained faster than
-# from scratch.
-# + The paper discussed two specific methods of Net2Net, i.e. Net2WiderNet
-# and Net2DeeperNet.
-# + Net2WiderNet replaces a model with an equivalent wider model that has
-# more units in each hidden layer.
-# + Net2DeeperNet replaces a model with an equivalent deeper model.
-# + Both are based on the idea of 'function-preserving transformations of
-# neural nets'.
+#   + Net2Net is a group of methods to transfer knowledge from a teacher neural
+#   net to a student net,so that the student net can be trained faster than
+#   from scratch.
+#   + The paper discussed two specific methods of Net2Net, i.e. Net2WiderNet
+#   and Net2DeeperNet.
+#   + Net2WiderNet replaces a model with an equivalent wider model that has
+#   more units in each hidden layer.
+#   + Net2DeeperNet replaces a model with an equivalent deeper model.
+#   + Both are based on the idea of 'function-preserving transformations of
+#   neural nets'.
 # - Why:
-# + Enable fast exploration of multiple neural nets in experimentation and
-# design process,by creating a series of wider and deeper models with
-# transferable knowledge.
-# + Enable 'lifelong learning system' by gradually adjusting model complexity
-# to data availability,and reusing transferable knowledge.
+#   + Enable fast exploration of multiple neural nets in experimentation and
+#   design process,by creating a series of wider and deeper models with
+#   transferable knowledge.
+#   + Enable 'lifelong learning system' by gradually adjusting model complexity
+#   to data availability,and reusing transferable knowledge.
 # 
 # Experiments
 # - Teacher model: a basic CNN model trained on MNIST for 3 epochs.
 # - Net2WiderNet experiment:
-# + Student model has a wider Conv2D layer and a wider FC layer.
-# + Comparison of 'random-padding' vs 'net2wider' weight initialization.
-# + With both methods, student model should immediately perform as well as
+#   + Student model has a wider Conv2D layer and a wider FC layer.
+#   + Comparison of 'random-padding' vs 'net2wider' weight initialization.
+#   + With both methods, student model should immediately perform as well as
 # teacher model, but 'net2wider' is slightly better.
 # - Net2DeeperNet experiment:
-# + Student model has an extra Conv2D layer and an extra FC layer.
-# + Comparison of 'random-init' vs 'net2deeper' weight initialization.
-# + Starting performance of 'net2deeper' is better than 'random-init'.
+#   + Student model has an extra Conv2D layer and an extra FC layer.
+#   + Comparison of 'random-init' vs 'net2deeper' weight initialization.
+#   + Starting performance of 'net2deeper' is better than 'random-init'.
 # - Hyper-parameters:
-# + SGD with momentum=0.9 is used for training teacher and student models.
-# + Learning rate adjustment: it's suggested to reduce learning rate
+#   + SGD with momentum=0.9 is used for training teacher and student models.
+#   + Learning rate adjustment: it's suggested to reduce learning rate
 #     to 1/10 for student model.
 #   + Addition of noise in 'net2wider' is used to break weight symmetry
 #     and thus enable full capacity of student models. It is optional
@@ -158,6 +158,34 @@ wider2net_conv2d <- function(teacher_w1, teacher_b1,
   )
 }
 
+# Get initial weights for a deeper conv2d layer by net2deeper'.
+# 
+# # Arguments
+# teacher_w: `weight` of previous conv2d layer, of shape 
+# (filters, num_channel, kh, kw)
+deeper2net_conv2d <- function(teacher_w){
+  shape <- dim(teacher_w)
+
+  student_w <- array(0, dim = c(shape[1], shape[2], shape[4], shape[4]))
+
+  for(i in 1:shape[4]){
+    student_w[(shape[1] - 1) / 2, (shape[2] - 1) / 2, i, i] <- 1.0
+  }
+  
+  student_b <- array(0, dim = c(shape[4]))
+  
+  list(student_w, student_b)
+}
+
+# Copy weights from teacher_model to student_model,
+# for layers with names listed in layer_names
+copy_weights <- function(teacher_model, student_model, layer_names){
+  for(name in layer_names){
+    weights <- student_model %>% get_layer(name) %>% get_weights()
+    student_model %>% get_layer(name) %>% set_weights(weights)
+  }
+}
+
 # methods to construct teacher_model and student_models
 make_teacher_model <- function(train_data, validation_data, epochs=3){
   
@@ -186,44 +214,6 @@ make_teacher_model <- function(train_data, validation_data, epochs=3){
   
   model
 }
-
-make_wider_model_scratch <- function(train_data, validation_data, epochs=3){
-  
-  new_conv1_width <- 128
-  new_fc1_width <- 128
-  
-  model <- keras_model_sequential()
-  
-  model %>%
-    # a wider conv1 compared to teacher_model
-    layer_conv_2d(
-      input_shape = input_shape, new_conv1_width, 
-      list(3, 3), padding = "same", name = "conv1"
-    ) %>%
-    layer_max_pooling_2d(2, name = "pool1") %>%
-    layer_conv_2d(64, list(3,3), padding = "same", name = "conv2") %>%
-    layer_max_pooling_2d(2, name = "pool2") %>%
-    layer_flatten(name = "flatten") %>%
-    # a wider fc1 compared to teacher model
-    layer_dense(new_fc1_width, activation = "relu", name = "fc1") %>%
-    layer_dense(num_class, activation = "softmax", name = "fc2")
-  
-  model %>% compile(
-    loss = "categorical_crossentropy",
-    optimizer = optimizer_sgd(lr = 0.01, momentum = 0.9),
-    metrics = "accuracy"
-  )
-  
-  history <- model %>% fit(
-    train_data$x, train_data$y,
-    epochs = epochs,
-    validation_data = list(validation_data$x, validation_data$y)
-  )
-  
-  model
-}
-
-
 
 # Train a wider student model based on teacher_model,
 # with either 'random-pad' (baseline) or 'net2wider'
@@ -295,6 +285,86 @@ make_wider_student_model <- function(teacher_model, train_data,
   model
 }
 
+# Train a deeper student model based on teacher_model,
+# with either 'random-init' (baseline) or 'net2deeper'
+make_deeper_student_model <- function(teacher_model, train_data,
+                                      validation_data, init, epochs = 3){
+  
+  model <- keras_model_sequential()
+  
+  model %>%
+    layer_conv_2d(
+      64, list(3,3), input_shape = input_shape,
+      padding = "same", name = "conv1"
+      ) %>%
+    layer_max_pooling_2d(2, name = "pool1") %>%
+    layer_conv_2d(64, list(3,3), padding = "same", name = "conv2")
+  
+  
+  if(init == "net2deeper"){
+    
+    weights <- model %>% get_layer("conv2") %>% get_weights()
+    new_weights <- deeper2net_conv2d(weights[[1]])
+    
+    model %>%
+      layer_conv_2d(
+        64, list(3,3), padding='same',
+        name='conv2-deeper', weights=new_weights
+      )
+    
+  } else if(init == "random-init"){
+    
+    model %>%
+      layer_conv_2d(64, list(3,3), padding = "same", name = "conv2-deeper")
+    
+  }
+  
+  model %>%
+    layer_max_pooling_2d(2, name = "pool2") %>%
+    layer_flatten() %>%
+    layer_dense(64, activation = "relu", name = "fc1")
+  
+  # add another fc layer to make original fc1 deeper
+  
+  if(init == "net2deeper"){
+    
+    model %>%
+      layer_dense(
+        64,
+        # this is commented until this issue is solved: 
+        # https://github.com/tensorflow/tensorflow/issues/434
+        # kernel_initializer = "identity", 
+        activation = "relu", 
+        name = "fc1-deeper"
+      )
+    
+  } else if(init == "random-init"){
+    
+    model %>% layer_dense(64, activation = "relu", name = "fc1-deeper")
+    
+  }
+  
+  model %>%
+    layer_dense(num_class, activation = "softmax", name = "fc2")
+  
+  # copy weights for other layers
+  copy_weights(teacher_model, model, c("conv1", "conv2", "fc1", "fc2"))
+  
+  model %>% compile(
+    loss = "categorical_crossentropy",
+    optimizer = optimizer_sgd(lr = 0.001, momentum = 0.9),
+    metrics = "accuracy"
+  )
+  
+  model %>% fit(
+    train_data$x, train_data$y,
+    epochs = epochs,
+    validation_data = list(validation_data$x, validation_data$y)
+  )
+  
+  model
+}
+
 # experiments setup
 
 # Benchmark performances of
@@ -319,12 +389,34 @@ net2wider_experiment <- function(){
                            mnist$test, "net2wider",
                            epochs=3)
   
-  cat("\nbuilding widedr model from scratch")
-  make_wider_model_scratch(mnist$train, mnist$test, epochs = 3)
+  cat("\nFinished")
+}
+
+# Benchmark performances of
+# (1) a teacher model,
+# (2) a deeper student model with `random_init` initializer
+# (3) a deeper student model with `Net2DeeperNet` initializer
+net2deeper_experiment <- function(){
+  
+  cat("\nExperiment of Net2DeeperNet ...")
+  cat("\nbuilding teacher model ...\n")
+  
+  teacher_model <- make_teacher_model(mnist$train, mnist$test, epochs = 3)
+ 
+  cat("\nbuilding deeper student model by random init...\n")
+  make_deeper_student_model(teacher_model, mnist$train,
+                            mnist$test, 'random-init',
+                            epochs=3)
+  
+  cat('\nbuilding deeper student model by net2deeper ...')
+  make_deeper_student_model(teacher_model, mnist$train,
+                            mnist$test, 'net2deeper',
+                            epochs=3)
   
   cat("\nFinished")
 }
 
 
 net2wider_experiment()
+net2deeper_experiment()
  
