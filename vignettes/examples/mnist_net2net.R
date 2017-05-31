@@ -52,6 +52,7 @@
 # (3) wider_net2wider:           0.032    0.030    0.030
 # (4) deeper_random_init:        0.061    0.043    0.041
 # (5) deeper_net2deeper:         0.032    0.031    0.029
+
 library(keras)
 library(abind)
 library(purrr)
@@ -419,4 +420,5 @@ net2deeper_experiment <- function(){
 
 net2wider_experiment()
 net2deeper_experiment()
+
  
